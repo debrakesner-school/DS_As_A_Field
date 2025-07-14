@@ -1,0 +1,303 @@
+---
+title: "NYC Shooting Information"
+author: "Student"
+date: "2025-07-08"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Project Requirements
+
+Import, tidy and analyze the NYPD Shooting Incident dataset obtained. 
+Be sure your project is reproducible and contains some visualization and analysis. 
+You may use the data to do any analysis that is of interest to you. 
+You should include at least two visualizations and one model. 
+Be sure to identify any bias possible in the data and in your analysis.
+
+All code will be present in document, but placed in the 'show' button to keep the document and visualizations cleaner.  There is also a 'Code' drop down in the upper right hand corner of the document that you can choose to show all or hide all code if helpful.
+
+# Import the Data
+
+Below is a summary of the data we will be using.  The data is a list of every shooting incident that occurred in NYC  going back to 2006 through the end of the previous calendar year (2024).
+```{r import}
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+
+url_in <- 'https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD'
+
+shooting <- read_csv(url_in)
+
+summary(shooting)
+```
+
+# Tidy and Transform the Data
+
+The code below transforms data (e.g., factoritization of data) as well as adds some variables I would like to segement out and review (e.g., hour and day of week variables).
+
+```{r transform}
+shooting_trans <- shooting %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         BORO = as.factor(BORO),
+         LOC_OF_OCCUR_DESC = as.factor(LOC_OF_OCCUR_DESC),
+         PRECINCT = as.factor(PRECINCT),
+         JURISDICTION_CODE = as.factor(JURISDICTION_CODE),
+         PERP_AGE_GROUP = as.factor(PERP_AGE_GROUP),
+         PERP_SEX = as.factor(PERP_SEX),
+         PERP_RACE = as.factor(PERP_RACE),
+         VIC_AGE_GROUP = as.factor(VIC_AGE_GROUP),
+         VIC_SEX = as.factor(VIC_SEX),
+         VIC_RACE = as.factor(VIC_RACE))
+
+# Data Dictionary Information:
+#   Jurisdiction where the shooting incident occurred. 
+#   Jurisdiction codes 0(Patrol), 1(Transit) and 2(Housing) 
+#   represent NYPD whilst codes 3 and more represent non NYPD jurisdictions
+# Rename levels
+levels(shooting_trans$JURISDICTION_CODE) <- list(Patrol = "0",
+                                                     Transit = "1",
+                                                     Housing = "2")
+
+# add some date options
+shooting_trans <- shooting_trans %>%
+  mutate(year = year(OCCUR_DATE),
+         month = month(OCCUR_DATE),
+         quarter = quarter(OCCUR_DATE),
+         day_of_week = wday(OCCUR_DATE)) # 1 = Sunday
+
+# based on analysis, I believe there to be non-continous trends on year
+shooting_trans <- shooting_trans %>%
+  mutate(year = as.factor(year),
+         month = as.factor(month),
+         quarter = as.factor(quarter),
+         day_of_week = as.factor(day_of_week))
+
+# Rename levels
+levels(shooting_trans$day_of_week) <- list(Sunday = "1",
+                                           Monday = "2",
+                                           Tuesday = "3",
+                                           Wednesday = "4",
+                                           Thursday = "5",
+                                           Friday = "6",
+                                           Saturday = "7")
+
+# based on analysis - summer seems to have increased incidents
+# (may be more helpful than quarter)
+shooting_trans <- shooting_trans %>%
+  mutate(is_summer = case_when(month %in% c(6,7,8) ~ TRUE,
+                               .default = FALSE),
+         is_fall = case_when(month %in% c(9,10,11,12) ~ TRUE,
+                             .default = FALSE),
+         is_winterspring = case_when(month %in% c(1, 2, 3, 4, 5) ~ TRUE,
+                                     .default = FALSE),
+         season = case_when(month %in% c(6,7,8) ~ "summer",
+                            month %in% c(9,10,11,12) ~ "fall",
+                            month %in% c(1, 2, 3, 4, 5) ~ "winterspring"))
+
+
+# generalize time a bit 
+shooting_trans <- shooting_trans %>%
+  mutate(hour = hour(OCCUR_TIME))
+```
+
+# Analyze the Data
+
+I took several different cuts at the data attempting to see if there was anything interesting or missing in the data.  These cuts (and the subsequent prettier versions I will share in Visualizations) helped me determine what I thought could be modeled for an interesting prediction set and gave me clues as to what would not be helpful.  For instance, many of the perpetrator demographic fields were not very complete.  Additionally, it helped to cut several of the time variables up into more descrete pieces (done in the Transformation section subequent to analysis).
+```{r Analyze}
+shooting_trans %>%
+  group_by(BORO) %>%
+  summarise(shooting_cnt = n(),
+            murder_cnt = sum(STATISTICAL_MURDER_FLAG)) %>%
+  ungroup() %>%
+  mutate(murder_pct = murder_cnt/ (murder_cnt + shooting_cnt),
+         shoot_pct_of_total = shooting_cnt/sum(shooting_cnt)) %>%
+  arrange(desc(shooting_cnt))
+
+# A tibble: 5 × 5
+# BORO          shooting_cnt murder_cnt murder_pct shoot_pct_of_total
+# <fct>                <int>      <int>      <dbl>              <dbl>
+# 1 BROOKLYN             11685       2277      0.163             0.393 
+# 2 BRONX                 8834       1728      0.164             0.297 
+# 3 QUEENS                4426        871      0.164             0.149 
+# 4 MANHATTAN             3977        719      0.153             0.134 
+# 5 STATEN ISLAND          822        170      0.171             0.0276
+
+
+shooting_trans %>%
+  group_by(PRECINCT) %>%
+  summarise(shooting_cnt = n()) %>%
+  ungroup() %>%
+  mutate(pct_of_total = shooting_cnt/sum(shooting_cnt)) %>%
+  arrange(desc(shooting_cnt))
+
+shooting_trans %>%
+  group_by(year) %>%
+  summarise(shooting_cnt = n(),
+            murder_cnt = sum(STATISTICAL_MURDER_FLAG)) %>%
+  ungroup() %>%
+  mutate(murder_pct = murder_cnt/ (murder_cnt + shooting_cnt),
+         shoot_pct_of_total = shooting_cnt/sum(shooting_cnt)) %>%
+  arrange(desc(year))
+
+shooting_trans %>%
+  group_by(hour) %>%
+  summarise(shooting_cnt = n(),
+            murder_cnt = sum(STATISTICAL_MURDER_FLAG)) %>%
+  ungroup() %>%
+  mutate(murder_pct = murder_cnt/ (murder_cnt + shooting_cnt),
+         shoot_pct_of_total = shooting_cnt/sum(shooting_cnt)) %>%
+  arrange(desc(shoot_pct_of_total)) 
+
+shooting_trans %>%
+  group_by(day_of_week) %>%
+  summarise(shooting_cnt = n(),
+            murder_cnt = sum(STATISTICAL_MURDER_FLAG)) %>%
+  ungroup() %>%
+  mutate(murder_pct = murder_cnt/ (murder_cnt + shooting_cnt),
+         shoot_pct_of_total = shooting_cnt/sum(shooting_cnt)) %>%
+  arrange(desc(shoot_pct_of_total)) 
+
+```
+
+# Visualize the Data
+
+I ran several visualizations of the data to help me get a sense for what I was looking at, if there were any obvious trends / relationships, etc.
+```{r visualization}
+
+# big change in 2020
+shooting_trans %>%
+  ggplot(aes(x = year)) +
+  geom_histogram(stat = "count")
+
+
+# Q3 uptick almost every year, but maybe not quarterly after looking at month below
+shooting_trans %>%
+  ggplot(aes(x = quarter)) +
+  geom_histogram(stat = "count") +
+  facet_wrap(~ year)
+
+shooting_trans %>%
+  ggplot(aes(x = month)) +
+  geom_histogram(stat = "count") +
+  facet_wrap(~ year)
+
+
+shooting_trans %>%
+  ggplot(aes(x = PRECINCT)) +
+  geom_histogram(stat = "count") +
+  facet_wrap(~ BORO)
+
+
+shooting_trans %>%
+  ggplot(aes(x = hour)) +
+  geom_histogram(stat = "count") 
+
+shooting_trans %>%
+  ggplot(aes(x = day_of_week)) +
+  geom_histogram(stat = "count") 
+
+```
+
+
+
+# Model the Data
+
+I attempted a very basic linear model in hopes of answering the question:  Given a day of the week, an hour of the day and the borough, could we help predict shooting activity?  With an goal towards an application for police staffing optimization.
+
+Model results and visualizations are outlined below.
+```{r model}
+# Model -------------------------------------------------------------
+
+# summarise data by date, hour and precinct
+# hopes to predict shooting counts by date /time / borough for police staffing
+shooting_trans_grp <- shooting_trans %>%
+  group_by(hour, day_of_week, year, PRECINCT, BORO) %>%
+  summarise(shooting_cnt = n(),
+            murder_cnt = sum(STATISTICAL_MURDER_FLAG)) %>%
+  ungroup()
+
+
+mod <- lm(shooting_cnt ~ hour:day_of_week + day_of_week + hour + BORO+ year,
+          data = shooting_trans_grp)
+
+
+summary(mod)
+
+
+shooting_trans_grp <- shooting_trans_grp %>%
+  mutate(pred = predict(mod))
+
+
+shooting_trans_grp %>%
+  group_by(hour) %>%
+  summarise(Actual = sum(shooting_cnt),
+            Prediction = sum(pred)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Actual, Prediction)) %>%
+  rename(Category = name,
+         Hour = hour) %>%
+  ggplot(aes(fill=Category, y=value, x=Hour)) + 
+  geom_bar(position="dodge", stat="identity") +
+  labs(title = "Shootings By Hour - Predicted vs. Actual", y = NULL)
+
+
+shooting_trans_grp %>%
+  group_by(day_of_week) %>%
+  summarise(Actual = sum(shooting_cnt),
+            Prediction = sum(pred)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Actual, Prediction)) %>%
+  rename(Category = name,
+         Day = day_of_week) %>%
+  ggplot(aes(fill=Category, y=value, x=Day)) + 
+  geom_bar(position="dodge", stat="identity") +
+  labs(title = "Shootings By Day - Predicted vs. Actual", y = NULL) +
+  theme(axis.text.x = element_text(angle = 90))
+
+
+shooting_trans_grp %>%
+  group_by(BORO) %>%
+  summarise(Actual = sum(shooting_cnt),
+            Prediction = sum(pred)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Actual, Prediction)) %>%
+  rename(Category = name,
+         Borough = BORO) %>%
+  ggplot(aes(fill=Category, y=value, x=Borough)) + 
+  geom_bar(position="dodge", stat="identity") +
+  labs(title = "Shootings By Borough - Predicted vs. Actual", y = NULL) +
+  theme(axis.text.x = element_text(angle = 90))
+
+shooting_trans_grp %>%
+  group_by(year) %>%
+  summarise(Actual = sum(shooting_cnt),
+            Prediction = sum(pred)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Actual, Prediction)) %>%
+  rename(Category = name,
+         Year = year) %>%
+  ggplot(aes(fill=Category, y=value, x=Year)) + 
+  geom_bar(position="dodge", stat="identity") +
+  labs(title = "Shootings By Year - Predicted vs. Actual", y = NULL) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+
+# Potential Bias
+
+A potential bias I have was in variable selection.  I really only modeled the variables that made logical sense to me from my experience (e.g., more shootings happen on weekends or late at night) and supported by my introductory analysis / visualizations.  I am sure given more time I could really look into any/all of the variables and see if there was something additional of note that I missed.
+
+I also skipped over some variables that seemed to potentially have a correlation as I wasn't sure how to explain them or what use they would be as an answer to my question and goal of helping Police staffing.  E.g., the age group of the victim seemed related, but I couldn't see how that would help anyone prior to a crime being committed, so I didn't want to use it as a predictor and leaving that information out could have skewed my results.
+
+# Conclusion
+
+In conclusion, I found it was possible to predict the number of shootings in a given borough at a given hour and day of the week.  It was my hope that a similar analysis could be used to solve a real-world problem of Police staffing at different dates / times.  The data itself was interesting to review and I learned a lot about graphing and the Data Science process.  I did wish that I had more data to potentially ask different questions (e.g., a bigger crime set than just shootings - which I found but was too large for my computer).  As next steps, I would certainly look to ways at importing large datasets to my system.  
+
+Thank you for reviewing my report!
+
