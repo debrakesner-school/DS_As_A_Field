@@ -1,0 +1,354 @@
+---
+title: "COVID Project"
+author: "Student"
+date: "2025-07-14"
+output: 
+  html_document:
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+## Read in the data
+
+See the 'show' button to reveal all codes in chunks
+
+```{r data_import, echo = TRUE}
+library(tidyverse)
+library(lubridate)
+# library(dplyr)
+library(ggplot2)
+
+
+url_in <- 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/'
+
+file_names <- c('time_series_covid19_confirmed_global.csv', 
+                'time_series_covid19_deaths_global.csv',
+                'time_series_covid19_confirmed_US.csv',
+                'time_series_covid19_deaths_US.csv')
+
+urls <-str_c(url_in, file_names)
+
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+```
+
+## Global Data Summaries
+
+
+```{r global_trans, echo=TRUE}
+# global information
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region',
+                         Lat,
+                         Long),
+               names_to = 'date',
+               values_to = 'cases') %>%
+  select(-c(Lat,Long))
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region',
+                         Lat,
+                         Long),
+               names_to = 'date',
+               values_to = 'deaths') %>%
+  select(-c(Lat,Long))
+
+
+# transform data
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+         Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+
+global <- global %>%
+  filter(cases > 0)
+
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+
+global <- global %>%
+  left_join(uid,
+            by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State,
+         Country_Region,
+         date,
+         cases,
+         deaths,
+         Population,
+         Combined_Key)
+
+global <- global %>%
+  mutate(Province_State = as.factor(Province_State),
+         Country_Region = as.factor(Country_Region),
+         Combined_Key = as.factor(Combined_Key))%>%
+  select(Province_State,
+         Country_Region,
+         Combined_Key,
+         date,
+         Population,
+         cases,
+         deaths)
+
+
+summary(global)
+
+
+```
+Some populations are missing as well as some non-countries exist.
+
+The populations are missing from some big countries (Canada, China).  
+We would want to find an additional data source if we were going to use
+Population in a meaningful way.
+It is also not clear what date range the 'Population' is from, so it
+could be misleading.
+
+And there is information from 2 Olympics which may or may not be needed
+
+```{r global_missing, echo=TRUE}
+
+global %>% 
+  group_by(Country_Region) %>%
+  summarise(Population = max(Population)) %>%
+  filter(is.na(Population))
+```
+
+
+
+## US Data Summaries
+
+
+```{r US_trans, echo=TRUE}
+# US information
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = 'date',
+               values_to = 'cases') %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = 'date',
+               values_to = 'deaths') %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US <- US_cases %>%
+  full_join(US_deaths)
+
+US <- US %>%
+  mutate(County = as.factor(Admin2),
+         Province_State = as.factor(Province_State),
+         Country_Region = as.factor(Country_Region),
+         Combined_Key = as.factor(Combined_Key)) %>%
+  select(County,
+         Province_State,
+         Country_Region,
+         Combined_Key,
+         date,
+         Population,
+         cases,
+         deaths)
+
+summary(US)
+
+
+
+```
+There are some negative cases and deaths, which doesn't make logical sense.  
+We should review these and determine if we need to smooth or impute to 0.  
+Cursory look appears like we need to impute to 0 as these are random numbers in the middle of a date range (and negative).
+
+```{r us_bad, echo=TRUE}
+
+US %>% 
+  filter(cases < 0) %>%
+  group_by(Province_State, County, date) %>%
+  summarise(cases = min(cases),
+            deaths = min(deaths)) 
+
+US <- US %>%
+  mutate(cases = ifelse(is.na(cases), 0, cases),
+         deaths = ifelse(is.na(deaths), 0, deaths),
+         cases = ifelse(cases < 0, 0, cases),
+         deaths = ifelse(deaths < 0, 0, deaths))
+```
+
+### Additional looks at US data
+
+```{r us_add, echo=TRUE}
+
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases),
+            deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases),
+            deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>%
+  select(Country_Region, date,
+         cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+US_by_state <- US_by_state %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+
+US_totals <- US_totals %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+US_totals <- US_totals %>%
+  mutate(new_cases = ifelse(is.na(new_cases), 0, new_cases),
+         new_deaths = ifelse(is.na(new_deaths), 0, new_deaths))
+
+US_state_totals <- US_by_state %>%
+  group_by(Province_State) %>%
+  summarise(deaths = max(deaths),
+            cases = max(cases),
+            population = max(Population),
+            cases_per_thou = 1000*cases/population,
+            deaths_per_thou = 1000*deaths/population) %>%
+  filter(cases > 0, population > 0)
+
+US_totals_dk <- US_totals
+
+US_totals_dk <- US_totals_dk %>%
+  mutate(year = factor(year(date), levels = c('2020', '2021', '2022', '2023')),
+         month = factor(month(date), levels = c(1,2,3,4,5,6,7,8,9,10,11,12)))
+
+US_totals_dk$Month_Yr <- format(US_totals_dk$date, "%Y%m")
+
+  
+```
+
+Smoothing the data by month and year, shows a big spike in new cases post-holidays in Jan 2022
+
+```{r us_add1, echo=TRUE}
+
+# new cases by month year
+US_totals_dk %>%
+  group_by(Month_Yr) %>%
+  summarise(new_cases = sum(new_cases),
+            new_deaths = sum(new_deaths)) %>%
+  ggplot(aes(x = Month_Yr, y = new_cases)) +
+  geom_bar(stat = 'identity') +
+  theme(legend.position = 'bottom',
+      axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in US - New Cases by Month/Year", y = NULL)
+```
+
+But there didn't seem to be an agreessive spike in deaths at the same time...
+
+```{r us_add2, echo=TRUE}
+
+# new deaths by month year
+US_totals_dk %>%
+  group_by(Month_Yr) %>%
+  summarise(new_cases = sum(new_cases),
+            new_deaths = sum(new_deaths)) %>%
+  ggplot(aes(x = Month_Yr, y = new_deaths)) +
+  geom_bar(stat = 'identity') +
+  theme(legend.position = 'bottom',
+        axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in US - New Deaths by Month/Year", y = NULL)
+```
+
+
+When looking at the new deaths to new cases ratio around the same early 2022 months, you can see
+a slight uptick in deaths per new cases in March 2022, perhaps revealing the lag in case onset to
+death.
+
+```{r us_add3, echo=TRUE}
+
+# new deaths over cases by month year
+US_totals_dk %>%
+  group_by(Month_Yr) %>%
+  summarise(new_cases = sum(new_cases),
+            new_deaths = sum(new_deaths)) %>%
+  mutate(new_cases_death_ratio = new_deaths/new_cases) %>%
+  ggplot(aes(x = Month_Yr, y = new_cases_death_ratio)) +
+  geom_bar(stat = 'identity') +
+  theme(legend.position = 'bottom',
+        axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in US - New Deaths To New Cases Ratio by Month/Year", y = NULL)
+```
+
+### Additional Opportunities for analysis
+
+* Look at the lag from new case to death over the time period to see if you could find a change
+in time from onset to death of the disease.
+* collapse the time data more to quaters to see seasonal trends
+
+# Forecasting Models
+
+Created a model that predicts deaths per thousand based on both cases per thousand as well as Month Year as presumably time to death and amounts of deaths changed over the progression of the disease.
+
+```{r model, echo=TRUE}
+
+mod <- lm(new_deaths ~ new_cases + Month_Yr, data = US_totals_dk)
+summary(mod)
+
+US_tot_w_pred <- US_totals_dk %>% mutate(pred = predict(mod))
+
+US_tot_w_pred %>%
+  ggplot() +
+  geom_point(aes(x = new_cases, y = new_deaths), color = 'blue') +
+  geom_point(aes(x = new_cases, y = pred), color = 'red') 
+
+US_tot_w_pred %>%
+  group_by(Month_Yr) %>%
+  summarise(Actual = sum(new_deaths),
+            Prediction = sum(pred)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(Actual, Prediction)) %>%
+  rename('Category' = name) %>%
+  ggplot(aes(fill = Category, y=value, x=Month_Yr)) + 
+  geom_bar(position="dodge", stat="identity") +
+  labs(title = "Deaths Per Thou by MonthYear - Predicted vs. Actual", y = NULL) +
+  theme(axis.text.x = element_text(angle = 90))
+
+  
+```
+
+# Bias
+
+Bias I may have on the data include looking at the data from a retrospective lens, further from real-time, knowing the general progression of the disease overtime and the social habit evolution.
+
+# Conclusion
+
+In conclusion, there is a lot of ways to model and view historic COVID19 data.  One could spend several weeks tilting and adding to the data in order to attempt to understand what occured, when and (maybe) why.
+
+The predictions show a stratified linearity on cases to deaths and nice symmetry in prediction over the year months.
+
+
