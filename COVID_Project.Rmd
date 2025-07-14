@@ -11,6 +11,13 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE)
 ```
+# Project Requirements & Question of interest
+
+Import, tidy and analyze the COVID19 dataset from the Johns Hopkins github site. This is the same dataset I used in class. Feel free to repeat and reuse what I did if you want to.  Be sure your project is reproducible and contains some visualization and analysis that is unique to your project. You may use the data to do any analysis that is of interest to you. You should include at least two visualizations and one model.  Be sure to identify any bias possible in the data and in your analysis
+
+All code will be present in document, but placed in the 'show' button to keep the document and visualizations cleaner.  There is also a 'Code' drop down in the upper right hand corner of the document that you can choose to show all or hide all code if helpful.
+
+This project is to review a COVID 19 datasest that tracks new COVID 19 cases as well as deaths over a period of approximately 3 years.  The report summarizes and reviews this data and attempts to forecast US deaths based on cases as well as a date element (month years).
 
 ## Read in the data
 
